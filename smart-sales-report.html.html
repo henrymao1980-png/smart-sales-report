@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智慧業務日報</title>
+
+  <!-- Tailwind CDN（開發/個人用 OK，正式環境建議改用官方安裝流程） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React / ReactDOM / Babel CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+</head>
+<body class="bg-slate-50">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    function SmartSalesReportApp() {
+      const [loading, setLoading] = useState(false);
+      const [searching, setSearching] = useState(false);
+      const [status, setStatus] = useState({ type: '', message: '' });
+      const [scriptUrl, setScriptUrl] = useState('');
+      const [showConfig, setShowConfig] = useState(false);
+
+      const [history, setHistory] = useState([
+        { date: '2023-10-27', client: '範例客戶 A', type: '拜訪', summary: '展示新產品型錄' },
+      ]);
+
+      const [formData, setFormData] = useState({
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toTimeString().split(' ')[0].slice(0, 5),
+        client: '',
+        contact: '',
+        phone: '',
+        contract: '',
+        address: '',
+        type: '現場拜訪',
+        location: '',
+        summary: '',
+        nextStep: '',
+      });
+
+      const handleChange = (e) => {
+        setFormData({ ...formData, [e.target.name]: e.target.value });
+      };
+
+      // 客戶搜尋
+      const handleSearchClient = async () => {
+        if (!formData.client) {
+          setStatus({ type: 'error', message: '請先輸入客戶關鍵字' });
+          return;
+        }
+
+        // 無 scriptUrl：使用 Demo 模式
+        if (!scriptUrl) {
+          setSearching(true);
+          setStatus({ type: '', message: '' });
+          setTimeout(() => {
+            setFormData((prev) => ({
+              ...prev,
+              client: '台積電範例股份有限公司',
+              contact: '張經理',
+              phone: '0912-345-678',
+              address: '新竹科學園區力行六路…',
+              contract: '有效合約（2025 到期）',
+              location: '新竹科學園區力行六路…',
+            }));
+            setSearching(false);
+            setStatus({ type: 'success', message: '演示模式：已載入範例客戶資料' });
+          }, 800);
+          return;
+        }
+
+        // 有 scriptUrl：打 Apps Script
+        setSearching(true);
+        setStatus({ type: '', message: '' });
+
+        try {
+          const queryUrl = `${scriptUrl}?action=search&name=${encodeURIComponent(
+            formData.client
+          )}`;
+
+          const response = await fetch(queryUrl);
+          const text = await response.text();
+
+          let json;
+          try {
+            json = JSON.parse(text);
+          } catch (e) {
+            console.error('Failed to parse JSON response:', text);
+            setStatus({
+              type: 'error',
+              message: 'Apps Script 返回格式錯誤，請檢查 doGet 是否有輸出 JSON',
+            });
+            setSearching(false);
+            return;
+          }
+
+          if (json.status === 'success') {
+            const data = json.data;
+            setFormData((prev) => ({
+              ...prev,
+              client: data.client || prev.client,
+              contact: data.contact || '',
+              phone: data.phone || '',
+              address: data.address || '',
+              contract: data.contract || '',
+              location: data.address || '',
+            }));
+            setStatus({ type: 'success', message: '資料帶入成功！' });
+          } else {
+            setStatus({
+              type: 'error',
+              message: json.message || '找不到符合的客戶資料',
+            });
+          }
+        } catch (error) {
+          console.error(error);
+          setStatus({
+            type: 'error',
+            message: '查詢失敗，請檢查網路或 Script URL 是否正確',
+          });
+        } finally {
+          setSearching(false);
+        }
+      };
+
+      // 表單送出（日報）
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setStatus({ type: '', message: '' });
+
+        // 無 scriptUrl：Demo 模式，直接寫入本機 history
+        if (!scriptUrl) {
+          setTimeout(() => {
+            setHistory([formData, ...history]);
+            setLoading(false);
+            setStatus({
+              type: 'success',
+              message: '演示模式：資料已送出（僅儲存在本機記憶體）',
+            });
+            setFormData((prev) => ({
+              ...prev,
+              client: '',
+              contact: '',
+              phone: '',
+              address: '',
+              contract: '',
+              location: '',
+              summary: '',
+              nextStep: '',
+            }));
+          }, 1000);
+          return;
+        }
+
+        // 有 scriptUrl：POST 到 Apps Script
+        try {
+          const formBody = new URLSearchParams(formData);
+
+          await fetch(scriptUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formBody,
+          });
+
+          setHistory([formData, ...history]);
+          setStatus({ type: 'success', message: '回報成功！資料已送出至後端' });
+          setFormData((prev) => ({
+            ...prev,
+            client: '',
+            contact: '',
+            phone: '',
+            address: '',
+            contract: '',
+            location: '',
+            summary: '',
+            nextStep: '',
+          }));
+        } catch (error) {
+          console.error(error);
+          setStatus({
+            type: 'error',
+            message: '連線失敗，請檢查 Script URL 或網路狀態',
+          });
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-10">
+          {/* Header */}
+          <header className="bg-indigo-600 text-white p-4 shadow-lg sticky top-0 z-10">
+            <div className="max-w-md mx-auto flex justify-between items-center">
+              <h1 className="text-xl font-bold flex items-center gap-2">
+                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-indigo-500 text-xs font-semibold">
+                  日
+                </span>
+                <span>智慧業務日報</span>
+              </h1>
+              <button
+                type="button"
+                onClick={() => setShowConfig(!showConfig)}
+                className="text-xs bg-indigo-700 px-2 py-1 rounded hover:bg-indigo-800 transition"
+              >
+                {showConfig ? '關閉' : '連線'}
+              </button>
+            </div>
+          </header>
+
+          <main className="max-w-md mx-auto p-4 space-y-6">
+            {/* 連線設定 */}
+            {showConfig && (
+              <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg text-sm mb-2">
+                <h3 className="font-bold text-yellow-800 mb-2">系統連線設定</h3>
+                <input
+                  type="text"
+                  placeholder="貼上 Google Apps Script URL（Web App 部署網址）"
+                  value={scriptUrl}
+                  onChange={(e) => setScriptUrl(e.target.value)}
+                  className="w-full p-2 border border-yellow-300 rounded text-xs"
+                />
+                <p className="mt-2 text-xs text-yellow-700 leading-relaxed">
+                  請確認：
+                  <br />
+                  1. Apps Script 已部署為 Web App。
+                  <br />
+                  2. 權限設定為「任何人皆可存取」。
+                  <br />
+                  3. doGet / doPost 皆有正確處理參數與輸出 JSON。
+                </p>
+              </div>
+            )}
+
+            {/* 狀態訊息 */}
+            {status.message && (
+              <div
+                className={`p-3 rounded-lg text-sm font-medium ${
+                  status.type === 'success'
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-red-100 text-red-700'
+                }`}
+              >
+                {status.message}
+              </div>
+            )}
+
+            {/* 客戶資料區 */}
+            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              <div className="p-5 border-b border-gray-100 bg-gray-50">
+                <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs flex items-center justify-center">
+                    客
+                  </span>
+                  客戶資料區
+                </h2>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* 客戶搜尋 */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    客戶名稱（輸入關鍵字搜尋）
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      name="client"
+                      placeholder="例：台積"
+                      value={formData.client}
+                      onChange={handleChange}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSearchClient}
+                      disabled={searching}
+                      className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 text-sm"
+                    >
+                      {searching ? '搜尋中…' : '搜尋'}
+                    </button>
+                  </div>
+                  {!scriptUrl && (
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      未設定 Script URL 時，將使用內建範例資料（Demo 模式）。
+                    </p>
+                  )}
+                </div>
+
+                {/* 聯絡資訊 */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      聯絡人
+                    </label>
+                    <input
+                      type="text"
+                      name="contact"
+                      value={formData.contact}
+                      onChange={handleChange}
+                      className="w-full px-2 py-1.5 bg-gray-50 border rounded text-sm"
+                      placeholder="自動帶入，可手動修改"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      聯絡電話
+                    </label>
+                    <input
+                      type="text"
+                      name="phone"
+                      value={formData.phone}
+                      onChange={handleChange}
+                      className="w-full px-2 py-1.5 bg-gray-50 border rounded text-sm"
+                      placeholder="自動帶入，可手動修改"
+                    />
+                  </div>
+                </div>
+
+                {/* 地址 */}
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">
+                    公司登記地址
+                  </label>
+                  <input
+                    type="text"
+                    name="address"
+                    value={formData.address}
+                    onChange={handleChange}
+                    className="w-full px-2 py-1.5 bg-gray-50 border rounded text-sm text-gray-700"
+                    placeholder="自動帶入，可手動修改"
+                  />
+                </div>
+
+                {/* 合約狀態 */}
+                <div
+                  className={`p-3 rounded border text-sm ${
+                    String(formData.contract).includes('有效')
+                      ? 'bg-green-50 border-green-200 text-green-800'
+                      : 'bg-gray-50 border-gray-200 text-gray-600'
+                  }`}
+                >
+                  <div className="text-[11px] font-bold uppercase opacity-70 mb-1">
+                    合約狀態
+                  </div>
+                  <div className="text-sm">
+                    {formData.contract || '尚未載入合約資訊'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 本次訪談紀錄 */}
+            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              <div className="p-5 border-b border-gray-100 bg-gray-50">
+                <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs flex items-center justify-center">
+                    記
+                  </span>
+                  本次訪談紀錄
+                </h2>
+              </div>
+
+              <form onSubmit={handleSubmit} className="p-5 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-600 mb-1">
+                      日期
+                    </label>
+                    <input
+                      type="date"
+                      name="date"
+                      required
+                      value={formData.date}
+                      onChange={handleChange}
+                      className="w-full px-2 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-600 mb-1">
+                      時間
+                    </label>
+                    <input
+                      type="time"
+                      name="time"
+                      required
+                      value={formData.time}
+                      onChange={handleChange}
+                      className="w-full px-2 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    拜訪類型
+                  </label>
+                  <select
+                    name="type"
+                    value={formData.type}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-sm"
+                  >
+                    <option value="現場拜訪">現場拜訪</option>
+                    <option value="電話聯繫">電話聯繫</option>
+                    <option value="線上會議">線上會議</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    實際拜訪地點
+                  </label>
+                  <input
+                    type="text"
+                    name="location"
+                    value={formData.location}
+                    onChange={handleChange}
+                    placeholder="若是現場拜訪，請輸入地點（預設帶入公司地址）"
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    摘要內容
+                  </label>
+                  <textarea
+                    name="summary"
+                    required
+                    rows="3"
+                    value={formData.summary}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+                    placeholder="簡要紀錄本次溝通內容、需求與重點"
+                  ></textarea>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    下一步
+                  </label>
+                  <input
+                    type="text"
+                    name="nextStep"
+                    value={formData.nextStep}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
+                    placeholder="例：下週提供報價、寄送樣品、安排試飲會等"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className={`w-full py-3 rounded-lg font-bold text-white shadow text-sm ${
+                    loading
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
+                >
+                  {loading ? '傳送中…' : '提交日報'}
+                </button>
+              </form>
+            </div>
+
+            {/* 簡易歷史紀錄（只存在當前頁面生命週期） */}
+            {history.length > 0 && (
+              <div className="bg-white rounded-xl shadow-md overflow-hidden">
+                <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-700">
+                    近期日報紀錄（本機記憶）
+                  </h3>
+                  <span className="text-[11px] text-gray-400">
+                    共 {history.length} 筆
+                  </span>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {history.map((item, idx) => (
+                    <div key={idx} className="p-3 text-xs">
+                      <div className="flex justify-between mb-1">
+                        <span className="font-semibold text-gray-800">
+                          {item.client || '未填寫客戶名稱'}
+                        </span>
+                        <span className="text-gray-500">
+                          {item.date} {item.time || ''}
+                        </span>
+                      </div>
+                      <div className="text-gray-600 mb-1">
+                        類型：{item.type}　地點：{item.location || '—'}
+                      </div>
+                      <div className="text-gray-700 line-clamp-2">
+                        摘要：{item.summary || '（無）'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <SmartSalesReportApp />
+    );
+  </script>
+</body>
+</html>
